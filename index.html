@@ -169,6 +169,30 @@
   .fc-plan-note { font-size: 12px; color: var(--blue); margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--sep); }
   .fc-none { font-size: 13px; color: var(--secondary); line-height: 1.6; }
 
+  /* 年末マイルストーン */
+  .ms-card { background: var(--card); border-radius: 14px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .ms-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+  .ms-row + .ms-row { border-top: 0.5px solid var(--sep); }
+  .ms-year { font-size: 14px; font-weight: 700; min-width: 56px; }
+  .ms-mid { flex: 1; min-width: 0; }
+  .ms-goal { font-size: 13px; color: var(--secondary); }
+  .ms-goal b { color: var(--ink); font-weight: 600; }
+  .ms-bar { height: 6px; background: var(--jal-bg); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+  .ms-bar > div { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+  .ms-stat { text-align: right; min-width: 74px; }
+  .ms-stat .ms-mark { font-size: 13px; font-weight: 700; }
+  .ms-stat .ms-gap { font-size: 11px; color: var(--secondary); margin-top: 1px; }
+  .ms-row.ok .ms-mark { color: #34C759; }
+  .ms-row.ok .ms-bar > div { background: #34C759; }
+  .ms-row.ng .ms-mark { color: var(--jal); }
+  .ms-row.ng .ms-bar > div { background: var(--jal); }
+  .ms-need { font-size: 11px; color: var(--secondary); margin-top: 5px; }
+  .ms-need b { color: var(--jal); font-weight: 700; }
+  .ms-need.ok-need { color: #34C759; }
+  .ms-need.ok-need b { color: #34C759; }
+  .ms-empty { text-align: center; color: var(--tertiary); font-size: 13px; padding: 14px; line-height: 1.7; }
+  .ms-edit-btn { color: var(--jal); font-size: 13px; font-weight: 600; }
+
   /* ソース内訳 */
   .bd-card { background: var(--card); border-radius: 14px; padding: 6px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
   .bd-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
@@ -300,6 +324,8 @@
 
       <div id="forecastArea"></div>
 
+      <div id="milestoneArea"></div>
+
       <div id="recordArea"></div>
 
       <div id="breakdownArea"></div>
@@ -352,6 +378,20 @@
   <button class="primary-btn" id="saveStartBtn">ここをスタートラインにする</button>
 </div>
 
+<!-- 年末マイルストーンシート -->
+<div class="sheet-bg" id="msBg"></div>
+<div class="sheet" id="msSheet">
+  <div class="sheet-h">
+    <span class="t">年末の目標LSP</span>
+    <button class="close-btn" data-close="ms">閉じる</button>
+  </div>
+  <div style="font-size:13px; color:var(--secondary); line-height:1.7; padding: 0 4px 4px;">
+    各年の12/31時点で到達したいLSPを入力してください。空欄の年はホームに表示されません。
+  </div>
+  <div id="msInputs"></div>
+  <button class="primary-btn" id="saveMilestoneBtn">保存</button>
+</div>
+
 <!-- 設定シート -->
 <div class="sheet-bg" id="setBg"></div>
 <div class="sheet" id="setSheet">
@@ -365,6 +405,10 @@
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">JALカード決済など毎月確実に入るptを入れると、基準日から月が変わるたびに累計へ自動加算されます。<b>この分は手動で記録しないでください</b>（二重計上になります）。</div>
   <input type="number" id="fRecurring" inputmode="numeric" min="0" step="1" placeholder="例: 5" />
   <button class="primary-btn" id="saveRecurringBtn" style="margin-top:10px;">自動加算を保存</button>
+  <div class="field-label" style="margin-top:24px;">年末マイルストーン</div>
+  <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">向こう5年、各年末（12/31）時点で到達したいLSPを設定します。ホームで予測と比べられます。</div>
+  <button class="secondary-btn" id="openMilestoneBtn" style="margin-top:0;">年末の目標LSPを設定</button>
+
   <div class="field-label" style="margin-top:24px;">スタートライン</div>
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">しばらく記録していなかったら、JALアプリの現在値で再同期してください。</div>
   <button class="secondary-btn" id="resyncBtn" style="margin-top:0;">現在のLSPに再同期する</button>
@@ -414,7 +458,7 @@
   }
 
   // ---------- バージョン ----------
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.7.0';
   function renderVersionLabel() {
     const t = 'v' + APP_VERSION;
     const a = $('#versionLabel'); if (a) a.textContent = t;
@@ -434,7 +478,7 @@
   const SRC_LABEL = { card: 'JALカード', flight: 'フライト', pay: 'JAL Pay', other: 'その他' };
 
   // ---------- State ----------
-  const state = { records: [], base: 0, baseSet: false, baseDate: '', goalPt: 0, recurring: 0 };
+  const state = { records: [], base: 0, baseSet: false, baseDate: '', goalPt: 0, recurring: 0, milestones: {} };
 
   async function loadAll() {
     state.records = (await getAll('records')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
@@ -447,6 +491,8 @@
     state.goalPt = goalRow ? (Number(goalRow.value) || 0) : 0;
     const recRow = settings.find((s) => s.id === 'recurring');
     state.recurring = recRow ? (Number(recRow.value) || 0) : 0;
+    const msRow = settings.find((s) => s.id === 'milestones');
+    state.milestones = (msRow && msRow.value && typeof msRow.value === 'object') ? msRow.value : {};
   }
 
   // ---------- 計算 ----------
@@ -458,6 +504,22 @@
     return Math.max(0, (t.getFullYear() - fy) * 12 + (t.getMonth() + 1 - fm));
   }
   const accruedPt = () => (state.recurring > 0 && state.baseDate) ? state.recurring * monthsElapsed(state.baseDate) : 0;
+
+  // 今日から指定年の12月末までの月数
+  function monthsUntilYearEnd(year) {
+    const t = new Date();
+    return Math.max(0, (year - t.getFullYear()) * 12 + (12 - (t.getMonth() + 1)));
+  }
+  // 指定年の12/31時点での予測LSP = 現在total + その日までに来る予定 + 月間ペース×残り月数
+  function forecastAtYearEnd(year) {
+    const total = totalPt();
+    const endStr = year + '-12-31';
+    const plansUntil = state.records
+      .filter((r) => recStatus(r) === 'plan' && (r.date || '') <= endStr)
+      .reduce((s, r) => s + (Number(r.points) || 0), 0);
+    const months = monthsUntilYearEnd(year);
+    return Math.round(total + plansUntil + monthlyPace() * months);
+  }
   // 記録の状態: absorbed=基準日以前（スタートラインに反映済み） / counted=確定 / plan=未来の予定
   function recStatus(r) {
     const d = r.date || '';
@@ -569,6 +631,7 @@
     }
 
     renderForecast(total, plans, target, goal, pace);
+    renderMilestones();
     renderRecords();
     renderBreakdown();
     renderGradeList(total);
@@ -637,6 +700,70 @@
     }
     area.innerHTML = '<div class="fc-card"><div class="fc-head"><span class="fc-title">' + title + '</span><span class="fc-target">' + targetLabel + '</span></div>'
       + etaHtml + '<div class="fc-detail">' + detail + '</div>' + planNote + '</div>';
+  }
+
+  function renderMilestones() {
+    const area = $('#milestoneArea');
+    if (!state.baseSet) { area.innerHTML = ''; return; }
+    const years = Object.keys(state.milestones).map(Number).filter((y) => state.milestones[y] > 0).sort();
+    const thisYear = new Date().getFullYear();
+    // 過去年は表示しない
+    const shown = years.filter((y) => y >= thisYear);
+    if (!shown.length) {
+      area.innerHTML = '<div class="section-h"><span>年末マイルストーン</span><span class="sub ms-edit-btn" id="msQuickBtn">設定</span></div>'
+        + '<div class="ms-card"><div class="ms-empty">各年末の目標LSPを設定すると、<br>予測と比べて進捗が見えます。</div></div>';
+      const qb = $('#msQuickBtn'); if (qb) qb.addEventListener('click', openMilestone);
+      return;
+    }
+    let html = '<div class="section-h"><span>年末マイルストーン</span><span class="sub ms-edit-btn" id="msQuickBtn">編集</span></div><div class="ms-card">';
+    const total = totalPt();
+    const pace = monthlyPace();
+    const today = todayStr();
+    for (const y of shown) {
+      const goalLsp = state.milestones[y];
+      const fc = forecastAtYearEnd(y);
+      const ok = fc >= goalLsp;
+      const pct = Math.min(100, (fc / goalLsp) * 100);
+      const gap = ok ? '+' + (fc - goalLsp).toLocaleString() : '不足 ' + (goalLsp - fc).toLocaleString();
+
+      // 月あたりの必要ペースと現ペースとの差
+      const endStr = y + '-12-31';
+      const plansUntil = state.records
+        .filter((r) => recStatus(r) === 'plan' && (r.date || '') <= endStr)
+        .reduce((s, r) => s + (Number(r.points) || 0), 0);
+      const months = monthsUntilYearEnd(y);
+      let needLine = '';
+      if (ok) {
+        needLine = '<div class="ms-need ok-need">現ペース（月' + fmtPace(pace) + 'pt）で到達見込み</div>';
+      } else if (months <= 0) {
+        needLine = '<div class="ms-need">今年の残り月がなく、到達は困難です</div>';
+      } else {
+        // 予定を除いた、ペースで賄うべき残りptを月数で割る
+        const needFromPace = Math.max(0, goalLsp - total - plansUntil);
+        const needPerMonth = needFromPace / months;
+        const shortPerMonth = Math.max(0, needPerMonth - pace);
+        needLine = '<div class="ms-need">月 <b>' + fmtPace(needPerMonth) + 'pt</b> 必要（あと 月<b>' + fmtPace(shortPerMonth) + 'pt</b>）</div>';
+      }
+
+      html += '<div class="ms-row ' + (ok ? 'ok' : 'ng') + '">'
+        + '<span class="ms-year">' + y + '末</span>'
+        + '<div class="ms-mid">'
+        + '<div class="ms-goal">目標 <b>' + goalLsp.toLocaleString() + 'pt</b> / 予測 ' + fc.toLocaleString() + 'pt</div>'
+        + '<div class="ms-bar"><div style="width:' + pct.toFixed(1) + '%"></div></div>'
+        + needLine
+        + '</div>'
+        + '<div class="ms-stat"><div class="ms-mark">' + (ok ? '達成見込' : '未達') + '</div><div class="ms-gap">' + gap + 'pt</div></div>'
+        + '</div>';
+    }
+    html += '</div>';
+    area.innerHTML = html;
+    const qb = $('#msQuickBtn'); if (qb) qb.addEventListener('click', openMilestone);
+  }
+
+  // ペース表示: 整数なら整数、端数は小数1桁
+  function fmtPace(v) {
+    const r = Math.round(v * 10) / 10;
+    return (Number.isInteger(r) ? r : r.toFixed(1)).toLocaleString();
   }
 
   function renderBreakdown() {
@@ -892,6 +1019,35 @@
     showToast(g ? '目標を ' + g.name + ' にしました' : '目標を解除しました');
   });
   $('#resyncBtn').addEventListener('click', () => { closeSet(); openStart(); });
+  $('#openMilestoneBtn').addEventListener('click', () => { closeSet(); openMilestone(); });
+
+  // ---------- 年末マイルストーンシート ----------
+  function openMilestone() {
+    const thisYear = new Date().getFullYear();
+    let html = '';
+    for (let i = 0; i < 5; i++) {
+      const y = thisYear + i;
+      const val = state.milestones[y] || '';
+      html += '<div class="field-label">' + y + '年 12/31 時点の目標LSP</div>'
+        + '<input type="number" inputmode="numeric" min="0" step="1" data-year="' + y + '" value="' + val + '" placeholder="例: ' + (1000 + i * 500) + '" />';
+    }
+    $('#msInputs').innerHTML = html;
+    $('#msBg').classList.add('show');
+    $('#msSheet').classList.add('show');
+  }
+  function closeMilestone() { $('#msBg').classList.remove('show'); $('#msSheet').classList.remove('show'); }
+  $('#msBg').addEventListener('click', closeMilestone);
+  $('#saveMilestoneBtn').addEventListener('click', async () => {
+    const ms = {};
+    $$('#msInputs input').forEach((inp) => {
+      const v = Math.max(0, Number(inp.value) || 0);
+      if (v > 0) ms[inp.dataset.year] = v;
+    });
+    await put('settings', { id: 'milestones', value: ms, updatedAt: Date.now() });
+    closeMilestone();
+    await loadAll(); renderApp();
+    showToast('年末マイルストーンを保存しました');
+  });
   $('#saveRecurringBtn').addEventListener('click', async () => {
     const v = Math.max(0, Number($('#fRecurring').value) || 0);
     await put('settings', { id: 'recurring', value: v, updatedAt: Date.now() });
@@ -908,6 +1064,7 @@
   $$('.close-btn').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.close === 'add') closeAdd();
     else if (b.dataset.close === 'start') closeStart();
+    else if (b.dataset.close === 'ms') closeMilestone();
     else closeSet();
   }));
 
