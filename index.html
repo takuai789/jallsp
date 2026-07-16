@@ -154,6 +154,21 @@
   }
   .empty { text-align: center; color: var(--tertiary); font-size: 14px; padding: 40px 0 20px; line-height: 1.8; }
 
+  /* 達成見込みカード */
+  .fc-card {
+    background: var(--card); border-radius: 16px; margin-top: 12px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .fc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .fc-head .fc-title { font-size: 13px; font-weight: 600; color: var(--secondary); }
+  .fc-head .fc-target { font-size: 13px; font-weight: 700; color: var(--jal); margin-left: auto; }
+  .fc-eta { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; }
+  .fc-eta small { font-size: 14px; font-weight: 600; color: var(--secondary); margin-left: 6px; }
+  .fc-detail { font-size: 13px; color: var(--secondary); margin-top: 6px; line-height: 1.6; }
+  .fc-detail b { color: var(--ink); font-weight: 600; }
+  .fc-plan-note { font-size: 12px; color: var(--blue); margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--sep); }
+  .fc-none { font-size: 13px; color: var(--secondary); line-height: 1.6; }
+
   /* ソース内訳 */
   .bd-card { background: var(--card); border-radius: 14px; padding: 6px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
   .bd-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
@@ -274,14 +289,16 @@
 
       <div class="pace">
         <div>
-          <div class="k">月平均（直近6ヶ月）</div>
+          <div class="k">月間ペース（自動＋実績）</div>
           <div class="v"><span id="paceVal">—</span><small>pt/月</small></div>
         </div>
         <div>
-          <div class="k" id="etaLabel">次グレード到達予測</div>
-          <div class="v" id="etaVal" style="font-size:16px;">—</div>
+          <div class="k" id="etaLabel">目標まで残り</div>
+          <div class="v" id="etaVal" style="font-size:19px;">—</div>
         </div>
       </div>
+
+      <div id="forecastArea"></div>
 
       <div id="recordArea"></div>
 
@@ -344,6 +361,10 @@
   </div>
   <div class="field-label">目標グレード</div>
   <div class="chips" id="goalChips"></div>
+  <div class="field-label" style="margin-top:24px;">毎月の自動加算（確実に入る分）</div>
+  <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">JALカード決済など毎月確実に入るptを入れると、基準日から月が変わるたびに累計へ自動加算されます。<b>この分は手動で記録しないでください</b>（二重計上になります）。</div>
+  <input type="number" id="fRecurring" inputmode="numeric" min="0" step="1" placeholder="例: 5" />
+  <button class="primary-btn" id="saveRecurringBtn" style="margin-top:10px;">自動加算を保存</button>
   <div class="field-label" style="margin-top:24px;">スタートライン</div>
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">しばらく記録していなかったら、JALアプリの現在値で再同期してください。</div>
   <button class="secondary-btn" id="resyncBtn" style="margin-top:0;">現在のLSPに再同期する</button>
@@ -393,7 +414,7 @@
   }
 
   // ---------- バージョン ----------
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.5.0';
   function renderVersionLabel() {
     const t = 'v' + APP_VERSION;
     const a = $('#versionLabel'); if (a) a.textContent = t;
@@ -413,7 +434,7 @@
   const SRC_LABEL = { card: 'JALカード', flight: 'フライト', pay: 'JAL Pay', other: 'その他' };
 
   // ---------- State ----------
-  const state = { records: [], base: 0, baseSet: false, baseDate: '', goalPt: 0 };
+  const state = { records: [], base: 0, baseSet: false, baseDate: '', goalPt: 0, recurring: 0 };
 
   async function loadAll() {
     state.records = (await getAll('records')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
@@ -424,9 +445,19 @@
     state.baseDate = (baseRow && baseRow.date) || ''; // 旧データは日付なし → 全記録が有効
     const goalRow = settings.find((s) => s.id === 'goal');
     state.goalPt = goalRow ? (Number(goalRow.value) || 0) : 0;
+    const recRow = settings.find((s) => s.id === 'recurring');
+    state.recurring = recRow ? (Number(recRow.value) || 0) : 0;
   }
 
   // ---------- 計算 ----------
+  // 基準日から今日までに月が変わった回数（自動加算の回数）
+  function monthsElapsed(fromDate) {
+    if (!fromDate) return 0;
+    const fy = Number(fromDate.slice(0, 4)), fm = Number(fromDate.slice(5, 7));
+    const t = new Date();
+    return Math.max(0, (t.getFullYear() - fy) * 12 + (t.getMonth() + 1 - fm));
+  }
+  const accruedPt = () => (state.recurring > 0 && state.baseDate) ? state.recurring * monthsElapsed(state.baseDate) : 0;
   // 記録の状態: absorbed=基準日以前（スタートラインに反映済み） / counted=確定 / plan=未来の予定
   function recStatus(r) {
     const d = r.date || '';
@@ -435,7 +466,7 @@
     return 'counted';
   }
   const sumPts = (recs) => recs.reduce((s, r) => s + (Number(r.points) || 0), 0);
-  const totalPt = () => state.base + sumPts(state.records.filter((r) => recStatus(r) === 'counted'));
+  const totalPt = () => state.base + accruedPt() + sumPts(state.records.filter((r) => recStatus(r) === 'counted'));
   const planSum = () => sumPts(state.records.filter((r) => recStatus(r) === 'plan'));
 
   function gradeInfo(total) {
@@ -450,10 +481,8 @@
 
   function monthKey(d) { return d.slice(0, 7); } // 'YYYY-MM'
 
-  // 直近6ヶ月（今月含む）の実績合計 ÷ 6（予定は含めない。反映済みも実績として含める）
+  // 月間ペース = 毎月の自動加算 + 確定記録（基準日より後・今日以前）の直近6ヶ月平均
   function monthlyPace() {
-    if (!state.records.length) return 0;
-    const today = todayStr();
     const now = new Date();
     const keys = [];
     for (let i = 0; i < 6; i++) {
@@ -461,9 +490,9 @@
       keys.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
     }
     const sum = state.records
-      .filter((r) => (r.date || '') <= today && keys.includes(monthKey(r.date || '')))
+      .filter((r) => recStatus(r) === 'counted' && keys.includes(monthKey(r.date || '')))
       .reduce((s, r) => s + (Number(r.points) || 0), 0);
-    return sum / 6;
+    return state.recurring + sum / 6;
   }
 
   // ---------- Render ----------
@@ -489,11 +518,14 @@
       heroSub.style.display = 'none';
     } else {
       startArea.innerHTML = '';
-      const recSum = total - state.base;
+      const accrued = accruedPt();
+      const recSum = total - state.base - accrued;
       const dateNote = state.baseDate
         ? '（' + Number(state.baseDate.slice(5, 7)) + '/' + Number(state.baseDate.slice(8, 10)) + '時点）'
         : '';
-      heroSub.textContent = 'スタートライン ' + state.base.toLocaleString() + 'pt' + dateNote + ' ＋ 記録 ' + recSum.toLocaleString() + 'pt';
+      heroSub.textContent = 'スタートライン ' + state.base.toLocaleString() + 'pt' + dateNote
+        + (accrued > 0 ? ' ＋ 自動 ' + accrued.toLocaleString() + 'pt' : '')
+        + ' ＋ 記録 ' + recSum.toLocaleString() + 'pt';
       heroSub.style.display = '';
     }
 
@@ -526,26 +558,85 @@
       planLine.style.display = 'none';
     }
 
-    // ペース・予測（目標があれば目標基準）
+    // ペース・残り（目標があれば目標基準）
     const pace = monthlyPace();
     $('#paceVal').textContent = pace > 0 ? (Math.round(pace * 10) / 10).toLocaleString() : '—';
-    $('#etaLabel').textContent = (target && target === goal) ? '目標到達予測' : '次グレード到達予測';
-    if (target && pace > 0) {
-      const months = Math.ceil((target.pt - total) / pace);
-      if (months <= 600) {
-        const eta = new Date();
-        eta.setMonth(eta.getMonth() + months);
-        $('#etaVal').textContent = eta.getFullYear() + '年' + (eta.getMonth() + 1) + '月ごろ';
-      } else {
-        $('#etaVal').textContent = '50年以上先';
-      }
+    $('#etaLabel').textContent = (target && target === goal) ? '目標まで残り' : '次グレードまで残り';
+    if (target) {
+      $('#etaVal').innerHTML = (target.pt - total).toLocaleString() + '<small style="font-size:12px;font-weight:500;color:var(--secondary);margin-left:2px;">pt</small>';
     } else {
       $('#etaVal').textContent = '—';
     }
 
+    renderForecast(total, plans, target, goal, pace);
     renderRecords();
     renderBreakdown();
     renderGradeList(total);
+  }
+
+  // 目標達成の見込み: 予定（未来の単発記録）を到達日に織り込み、残りを月間ペースで賄う
+  function renderForecast(total, plans, target, goal, pace) {
+    const area = $('#forecastArea');
+    if (!state.baseSet) { area.innerHTML = ''; return; }
+
+    const title = goal ? '目標達成の見込み' : '次グレード到達の見込み';
+    const targetLabel = target ? (starStr(target) ? starStr(target) + ' ' : '') + target.name : '';
+
+    // すでに到達
+    if (!target) {
+      area.innerHTML = '<div class="fc-card"><div class="fc-head"><span class="fc-title">' + title + '</span></div>'
+        + '<div class="fc-eta">🎉 達成済み</div>'
+        + '<div class="fc-detail">' + (goal ? '目標グレードに到達しています。' : '最上位グレードに到達しています。') + '</div></div>';
+      return;
+    }
+
+    const remain = target.pt - total;
+
+    // 予定だけで到達するか
+    if (total + plans >= target.pt) {
+      // 予定を古い順に足していき、到達する予定日を求める
+      const futurePlans = state.records
+        .filter((r) => recStatus(r) === 'plan')
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      let acc = total, hitDate = null;
+      for (const r of futurePlans) {
+        acc += Number(r.points) || 0;
+        if (acc >= target.pt) { hitDate = r.date; break; }
+      }
+      const y = Number(hitDate.slice(0, 4)), m = Number(hitDate.slice(5, 7));
+      area.innerHTML = '<div class="fc-card"><div class="fc-head"><span class="fc-title">' + title + '</span><span class="fc-target">' + targetLabel + '</span></div>'
+        + '<div class="fc-eta">' + y + '年' + m + '月<small>登録済みの予定で到達</small></div>'
+        + '<div class="fc-detail">あと <b>' + remain.toLocaleString() + 'pt</b> は登録済みの予定でまかなえます。</div></div>';
+      return;
+    }
+
+    // 予定で埋まらない残りをペースで賄う
+    if (pace <= 0) {
+      area.innerHTML = '<div class="fc-card"><div class="fc-head"><span class="fc-title">' + title + '</span><span class="fc-target">' + targetLabel + '</span></div>'
+        + '<div class="fc-eta">見込み未算出</div>'
+        + '<div class="fc-none">月間ペースが0のため予測できません。毎月の自動加算を設定するか、記録を続けると見込みが出ます。</div></div>';
+      return;
+    }
+
+    // 予定込みの残りをペースで割る
+    const remainAfterPlans = Math.max(0, remain - plans);
+    const months = Math.ceil(remainAfterPlans / pace);
+    let etaHtml, planNote = '';
+    if (months > 600) {
+      etaHtml = '<div class="fc-eta">50年以上先</div>';
+    } else {
+      const eta = new Date();
+      eta.setMonth(eta.getMonth() + months);
+      etaHtml = '<div class="fc-eta">' + eta.getFullYear() + '年' + (eta.getMonth() + 1) + '月<small>ごろ</small></div>';
+    }
+    const yrs = Math.floor(months / 12), mos = months % 12;
+    const durStr = (yrs > 0 ? yrs + '年' : '') + (mos > 0 ? mos + 'ヶ月' : (yrs > 0 ? '' : '0ヶ月'));
+    let detail = 'あと <b>' + remain.toLocaleString() + 'pt</b>、月 ' + (Math.round(pace * 10) / 10).toLocaleString() + 'pt ペースで <b>約' + durStr + '</b>。';
+    if (plans > 0) {
+      planNote = '<div class="fc-plan-note">登録済みの予定 +' + plans.toLocaleString() + 'pt を差し引いて計算しています。</div>';
+    }
+    area.innerHTML = '<div class="fc-card"><div class="fc-head"><span class="fc-title">' + title + '</span><span class="fc-target">' + targetLabel + '</span></div>'
+      + etaHtml + '<div class="fc-detail">' + detail + '</div>' + planNote + '</div>';
   }
 
   function renderBreakdown() {
@@ -775,6 +866,7 @@
   // ---------- 設定シート ----------
   function openSet() {
     renderGoalChips();
+    $('#fRecurring').value = state.recurring || '';
     $('#setBg').classList.add('show');
     $('#setSheet').classList.add('show');
   }
@@ -800,6 +892,16 @@
     showToast(g ? '目標を ' + g.name + ' にしました' : '目標を解除しました');
   });
   $('#resyncBtn').addEventListener('click', () => { closeSet(); openStart(); });
+  $('#saveRecurringBtn').addEventListener('click', async () => {
+    const v = Math.max(0, Number($('#fRecurring').value) || 0);
+    await put('settings', { id: 'recurring', value: v, updatedAt: Date.now() });
+    await loadAll(); renderApp();
+    if (v > 0 && !state.baseDate) {
+      showToast('保存しました。自動加算には基準日が必要です（再同期で設定）');
+    } else {
+      showToast(v > 0 ? '毎月 +' + v.toLocaleString() + 'pt を自動加算します' : '自動加算を解除しました');
+    }
+  });
 
   $('#settingsBtn').addEventListener('click', openSet);
   $('#setBg').addEventListener('click', closeSet);
