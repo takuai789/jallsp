@@ -185,6 +185,19 @@
   .ms-need.ok-need b { color: var(--green); }
   .ms-empty { text-align: center; color: var(--tertiary); font-size: 13px; padding: 10px 0; line-height: 1.7; }
 
+  /* メモ */
+  .memo-card { background: var(--card); border-radius: 16px; margin-top: 12px; padding: 14px 16px 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .memo-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .memo-head .mh-t { font-size: 13px; font-weight: 600; color: var(--secondary); }
+  .memo-head .mh-s { font-size: 11px; color: var(--tertiary); opacity: 0; transition: opacity 0.2s; }
+  .memo-head .mh-s.show { opacity: 1; }
+  #memoField {
+    width: 100%; min-height: 72px; border: 0; outline: none; resize: none;
+    font-family: inherit; font-size: 14px; line-height: 1.7; color: var(--ink);
+    background: transparent; padding: 0;
+  }
+  #memoField::placeholder { color: var(--tertiary); }
+
   /* ソース内訳 */
   .bd-card { background: var(--card); border-radius: 14px; padding: 6px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
   .bd-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
@@ -374,6 +387,11 @@
 
         <div class="section-h"><span>Star グレード基準</span></div>
         <div class="grade-list" id="gradeList"></div>
+
+        <div class="memo-card">
+          <div class="memo-head"><span class="mh-t">メモ</span><span class="mh-s" id="memoSaved">保存しました</span></div>
+          <textarea id="memoField" placeholder="キャンペーン期限、次に飛ぶ路線、目標の理由など自由に。&#10;（自動保存されます）"></textarea>
+        </div>
       </div>
 
       <div class="tab-panel" id="panelRecords">
@@ -509,7 +527,7 @@
     return new Promise((res, rej) => { const r = tx(store, 'readwrite').delete(id); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
   }
 
-  const APP_VERSION = '1.8.0';
+  const APP_VERSION = '1.9.0';
   function renderVersionLabel() {
     const t = 'v' + APP_VERSION;
     const a = $('#versionLabel'); if (a) a.textContent = t;
@@ -530,7 +548,7 @@
   const BACKUP_DAYS = 90;
 
   // ---------- State ----------
-  const state = { records: [], base: 0, baseSet: false, baseDate: '', goalPt: 0, recurring: 0, milestones: {}, lastExport: '' };
+  const state = { records: [], base: 0, baseSet: false, baseDate: '', goalPt: 0, recurring: 0, milestones: {}, lastExport: '', memo: '' };
   let activeTab = 'overview';
   let showAbsorbed = false;
 
@@ -550,6 +568,8 @@
     state.milestones = (msRow && msRow.value && typeof msRow.value === 'object') ? msRow.value : {};
     const exRow = pick('lastExport');
     state.lastExport = (exRow && exRow.value) || '';
+    const memoRow = pick('memo');
+    state.memo = (memoRow && typeof memoRow.value === 'string') ? memoRow.value : '';
   }
 
   // ---------- 日付ヘルパー ----------
@@ -1208,6 +1228,28 @@
   $('#tabOverview').addEventListener('click', () => setTab('overview'));
   $('#tabRecords').addEventListener('click', () => setTab('records'));
 
+  // ---------- メモ（自由記述・自動保存） ----------
+  let memoTimer = null;
+  function initMemo() {
+    const field = $('#memoField');
+    field.value = state.memo || '';
+    field.addEventListener('input', () => {
+      clearTimeout(memoTimer);
+      memoTimer = setTimeout(async () => {
+        const v = field.value;
+        await put('settings', { id: 'memo', value: v, updatedAt: Date.now() });
+        state.memo = v;
+        const saved = $('#memoSaved');
+        saved.classList.add('show');
+        setTimeout(() => saved.classList.remove('show'), 1200);
+      }, 600);
+    });
+    // キーボードが隠れないよう、フォーカス時に見える位置へ
+    field.addEventListener('focus', () => {
+      setTimeout(() => field.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+    });
+  }
+
   // ---------- JSON 書き出し / 取り込み ----------
   const SCHEMA = 'lsp-meter.v1';
   async function exportData() {
@@ -1267,6 +1309,7 @@
     await openDB();
     await loadAll();
     renderApp();
+    initMemo();
     renderVersionLabel();
   })();
 
