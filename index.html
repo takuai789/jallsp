@@ -157,6 +157,9 @@
   .fc-detail { font-size: 13px; color: var(--secondary); margin-top: 6px; line-height: 1.6; }
   .fc-detail b { color: var(--ink); font-weight: 600; }
   .fc-plan-note { font-size: 12px; color: var(--blue); margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--sep); }
+  .fc-alt { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--sep); }
+  .fc-alt-k { font-size: 12px; color: var(--secondary); }
+  .fc-alt-v { font-size: 13px; font-weight: 600; color: var(--ink); text-align: right; }
   .fc-none { font-size: 13px; color: var(--secondary); line-height: 1.6; }
 
   /* 年末マイルストーン（統合カード内） */
@@ -527,7 +530,7 @@
     return new Promise((res, rej) => { const r = tx(store, 'readwrite').delete(id); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
   }
 
-  const APP_VERSION = '1.9.0';
+  const APP_VERSION = '1.10.0';
   function renderVersionLabel() {
     const t = 'v' + APP_VERSION;
     const a = $('#versionLabel'); if (a) a.textContent = t;
@@ -659,6 +662,15 @@
   function fmtPace(v) {
     const r = Math.round(v * 10) / 10;
     return (Number.isInteger(r) ? r : r.toFixed(1)).toLocaleString();
+  }
+  // 月数 → 「2040年6月ごろ（約13年11ヶ月）」形式。50年超は簡略表示
+  function etaFromMonths(months) {
+    if (months > 600) return '50年以上先';
+    const d = new Date();
+    d.setMonth(d.getMonth() + months);
+    const yrs = Math.floor(months / 12), mos = months % 12;
+    const dur = (yrs > 0 ? yrs + '年' : '') + (mos > 0 ? mos + 'ヶ月' : (yrs > 0 ? '' : '0ヶ月'));
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月ごろ（約' + dur + '）';
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -821,6 +833,13 @@
       const durStr = (yrs > 0 ? yrs + '年' : '') + (mos > 0 ? mos + 'ヶ月' : (yrs > 0 ? '' : '0ヶ月'));
       body += '<div class="fc-detail">あと <b>' + remain.toLocaleString() + 'pt</b>、月 ' + fmtPace(pace) + 'pt ペースで <b>約' + durStr + '</b>。</div>';
       if (plans > 0) body += '<div class="fc-plan-note">登録済みの予定 +' + plans.toLocaleString() + 'pt を差し引いて計算しています。</div>';
+
+      // 自動積立分のみの保守ライン（実績込みペースと差があるときだけ併記）
+      if (state.recurring > 0 && state.recurring < pace - 0.05) {
+        const onlyStr = etaFromMonths(Math.ceil(remain / state.recurring));
+        body += '<div class="fc-alt"><span class="fc-alt-k">自動積立のみ（月' + fmtPace(state.recurring) + 'pt）</span>'
+          + '<span class="fc-alt-v">' + onlyStr + '</span></div>';
+      }
     }
 
     area.innerHTML = '<div class="fc-card">'
