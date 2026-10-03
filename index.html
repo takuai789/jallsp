@@ -126,6 +126,13 @@
   .backup-card .bk-d { font-size: 12px; color: var(--secondary); line-height: 1.6; margin-top: 4px; }
   .backup-card .bk-btn { width: 100%; margin-top: 10px; padding: 11px; border: 0; border-radius: 12px; background: var(--blue); color: #fff; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer; }
 
+  /* 自動バックアップ（設定内） */
+  .auto-backup .ab-note { font-size: 12px; color: var(--secondary); line-height: 1.6; padding: 0 4px 8px; }
+  .auto-backup .ab-note b { color: var(--ink); font-weight: 600; }
+  .auto-backup .ab-on { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--green); padding: 2px 4px 8px; }
+  .auto-backup .ab-on .ab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .auto-backup .ab-warn { font-size: 13px; font-weight: 600; color: var(--orange); padding: 2px 4px 8px; }
+
   /* タブ */
   .tabs { display: flex; gap: 4px; background: rgba(60,60,67,0.08); border-radius: 10px; padding: 3px; margin-top: 16px; }
   .tabs button {
@@ -484,7 +491,10 @@
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">しばらく記録していなかったら、JALアプリの現在値で再同期してください。</div>
   <button class="secondary-btn" id="resyncBtn" style="margin-top:0;">現在のLSPに再同期する</button>
 
-  <div class="field-label" style="margin-top:24px;">バックアップ / 同期</div>
+  <div class="field-label" style="margin-top:24px;">週次 自動バックアップ</div>
+  <div class="auto-backup" id="autoBackupBox"></div>
+
+  <div class="field-label" style="margin-top:24px;">バックアップ / 同期（手動）</div>
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;" id="lastExportNote"></div>
   <button class="secondary-btn" id="exportBtn" style="margin-top:0;">JSON 書き出し</button>
   <button class="secondary-btn" id="importBtn">JSON 取り込み（スマートマージ）</button>
@@ -502,8 +512,9 @@
 
   // ---------- IndexedDB ----------
   const DB_NAME = 'lsp-meter-db';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2; // v2: backup（FileSystemHandle保管用）ストア追加
   const STORES = ['records', 'settings'];
+  const KV_STORES = ['backup']; // keyPathなし（ハンドル等を任意キーで保管）
   let _db = null;
 
   function openDB() {
@@ -513,6 +524,9 @@
         const db = req.result;
         for (const s of STORES) {
           if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id' });
+        }
+        for (const s of KV_STORES) {
+          if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
         }
       };
       req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -529,8 +543,18 @@
   function del(store, id) {
     return new Promise((res, rej) => { const r = tx(store, 'readwrite').delete(id); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
   }
+  // keyPathなしストア用（key指定でget/put）
+  function kvGet(store, key) {
+    return new Promise((res, rej) => { const r = tx(store).get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  }
+  function kvPut(store, key, val) {
+    return new Promise((res, rej) => { const r = tx(store, 'readwrite').put(val, key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+  }
+  function kvDel(store, key) {
+    return new Promise((res, rej) => { const r = tx(store, 'readwrite').delete(key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+  }
 
-  const APP_VERSION = '1.10.0';
+  const APP_VERSION = '1.11.0';
   function renderVersionLabel() {
     const t = 'v' + APP_VERSION;
     const a = $('#versionLabel'); if (a) a.textContent = t;
@@ -1193,6 +1217,7 @@
     $('#lastExportNote').textContent = state.lastExport
       ? '前回の書き出し: ' + state.lastExport.slice(0, 10) + '（' + daysSince(state.lastExport) + '日前）'
       : 'まだ書き出していません。';
+    renderBackupSettings();
     $('#setBg').classList.add('show');
     $('#setSheet').classList.add('show');
   }
@@ -1271,17 +1296,24 @@
 
   // ---------- JSON 書き出し / 取り込み ----------
   const SCHEMA = 'lsp-meter.v1';
-  async function exportData() {
+  async function buildExportJSON() {
     const settings = await getAll('settings');
     const data = { schema: SCHEMA, exportedAt: new Date().toISOString(), records: state.records, settings };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    return JSON.stringify(data, null, 2);
+  }
+  async function markExported() {
+    await put('settings', { id: 'lastExport', value: new Date().toISOString(), updatedAt: Date.now() });
+    await loadAll(); renderApp();
+  }
+  async function exportData() {
+    const json = await buildExportJSON();
+    const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'lsp-meter-' + todayStr() + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    await put('settings', { id: 'lastExport', value: new Date().toISOString(), updatedAt: Date.now() });
-    await loadAll(); renderApp();
+    await markExported();
     showToast('書き出しました');
   }
   async function importData(file) {
@@ -1312,6 +1344,110 @@
     e.target.value = '';
   });
 
+  // ---------- 週次 自動バックアップ（File System Access API / mac用） ----------
+  const BACKUP_INTERVAL_DAYS = 7;
+  const fsaSupported = () => (typeof window.showDirectoryPicker === 'function');
+
+  async function getBackupDirHandle() { return kvGet('backup', 'dirHandle'); }
+  async function hasBackupPermission(handle, mode = 'readwrite') {
+    if (!handle || !handle.queryPermission) return false;
+    try { return (await handle.queryPermission({ mode })) === 'granted'; } catch (e) { return false; }
+  }
+  async function ensureBackupPermission(handle, mode = 'readwrite') {
+    if (await hasBackupPermission(handle, mode)) return true;
+    try { return (await handle.requestPermission({ mode })) === 'granted'; } catch (e) { return false; }
+  }
+
+  // フォルダを選んで自動バックアップを有効化
+  async function enableAutoBackup() {
+    if (!fsaSupported()) {
+      showToast('この環境は自動バックアップ非対応。手動書き出しをご利用ください');
+      return;
+    }
+    let handle;
+    try {
+      handle = await window.showDirectoryPicker({ id: 'lsp-backup', mode: 'readwrite', startIn: 'documents' });
+    } catch (e) { return; } // ユーザーがキャンセル
+    if (!(await ensureBackupPermission(handle))) { showToast('フォルダへの書き込み許可が必要です'); return; }
+    await kvPut('backup', 'dirHandle', handle);
+    await writeBackupFile(handle); // 有効化直後に1本置く
+    renderBackupSettings();
+    showToast('自動バックアップを有効にしました');
+  }
+
+  async function disableAutoBackup() {
+    await kvDel('backup', 'dirHandle');
+    renderBackupSettings();
+    showToast('自動バックアップを解除しました');
+  }
+
+  // 実ファイル書き込み（固定名で上書き＋日付名で週次スナップショット）
+  async function writeBackupFile(handle) {
+    const json = await buildExportJSON();
+    // 1) 最新版（常に上書き）
+    await writeOneFile(handle, 'lsp-meter-latest.json', json);
+    // 2) 当週のスナップショット（同じ週は上書き、週替わりで増える）
+    await writeOneFile(handle, 'lsp-meter-' + todayStr() + '.json', json);
+    await markExported();
+  }
+  async function writeOneFile(handle, name, text) {
+    const fh = await handle.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(text);
+    await w.close();
+  }
+
+  // 起動時チェック: 権限が生きていて、前回から7日以上なら自動で書き出す
+  async function runAutoBackupIfDue() {
+    if (!fsaSupported()) return;
+    const handle = await getBackupDirHandle();
+    if (!handle) return;
+    if (!(await hasBackupPermission(handle))) return; // 権限切れ → 次に設定を開いたとき再許可を促す
+    if (daysSince(state.lastExport) < BACKUP_INTERVAL_DAYS) return;
+    try {
+      await writeBackupFile(handle);
+      showToast('自動バックアップしました');
+    } catch (e) { /* 失敗時は催促バナーに任せる */ }
+  }
+
+  // 設定内の自動バックアップUI
+  function renderBackupSettings() {
+    const box = $('#autoBackupBox');
+    if (!box) return;
+    if (!fsaSupported()) {
+      box.innerHTML = '<div class="ab-note">自動バックアップはパソコンのChrome / Edge系ブラウザでのみ利用できます（Safari・iPhoneは非対応）。これらの環境では下の「JSON書き出し」を手動でお使いください。</div>';
+      return;
+    }
+    getBackupDirHandle().then(async (handle) => {
+      if (handle && await hasBackupPermission(handle)) {
+        box.innerHTML = '<div class="ab-on"><span class="ab-dot"></span>有効（' + escapeHtml(handle.name) + ' フォルダ）</div>'
+          + '<div class="ab-note">起動時に前回から7日以上たっていれば自動で書き出します。<b>' + escapeHtml(handle.name) + '/lsp-meter-latest.json</b> が常に最新、日付つきファイルが週次スナップショットです。</div>'
+          + '<button class="secondary-btn" id="backupNowManualBtn" style="margin-top:0;">今すぐバックアップ</button>'
+          + '<button class="secondary-btn" id="disableBackupBtn">自動バックアップを解除</button>';
+        $('#backupNowManualBtn').addEventListener('click', async () => {
+          const h = await getBackupDirHandle();
+          if (h && await ensureBackupPermission(h)) { await writeBackupFile(h); renderBackupSettings(); showToast('バックアップしました'); }
+        });
+        $('#disableBackupBtn').addEventListener('click', disableAutoBackup);
+      } else if (handle) {
+        // ハンドルはあるが権限切れ（ブラウザ再起動後など）
+        box.innerHTML = '<div class="ab-warn">フォルダへのアクセス許可が切れています。再許可してください。</div>'
+          + '<button class="secondary-btn" id="reauthBackupBtn" style="margin-top:0;">アクセスを再許可する</button>'
+          + '<button class="secondary-btn" id="disableBackupBtn">解除して選び直す</button>';
+        $('#reauthBackupBtn').addEventListener('click', async () => {
+          const h = await getBackupDirHandle();
+          if (h && await ensureBackupPermission(h)) { await writeBackupFile(h); renderBackupSettings(); showToast('再許可しました'); }
+          else showToast('許可されませんでした');
+        });
+        $('#disableBackupBtn').addEventListener('click', disableAutoBackup);
+      } else {
+        box.innerHTML = '<div class="ab-note">保存先フォルダを一度選ぶと、以降は起動時に週1回、自動で書き出します（iCloud DriveやDropbox内のフォルダを選べば他端末にも同期されます）。</div>'
+          + '<button class="secondary-btn" id="enableBackupBtn" style="margin-top:0;">保存先を選んで有効にする</button>';
+        $('#enableBackupBtn').addEventListener('click', enableAutoBackup);
+      }
+    });
+  }
+
   // ---------- トースト ----------
   let toastTimer = null;
   function showToast(msg) {
@@ -1330,6 +1466,8 @@
     renderApp();
     initMemo();
     renderVersionLabel();
+    // 週次 自動バックアップ（権限が生きていて、前回から7日以上なら書き出す）
+    runAutoBackupIfDue().catch(() => {});
   })();
 
   function setupViewportTracking() {
