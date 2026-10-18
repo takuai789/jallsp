@@ -571,13 +571,15 @@
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;">しばらく記録していなかったら、JALアプリの現在値で再同期してください。</div>
   <button class="secondary-btn" id="resyncBtn" style="margin-top:0;">現在のLSPに再同期する</button>
 
-  <div class="field-label" style="margin-top:24px;">週次 自動バックアップ</div>
+  <div id="autoBackupWrap">
+  <div class="field-label" style="margin-top:24px;">週次 自動バックアップ（Mac の Chrome）</div>
   <div class="auto-backup" id="autoBackupBox"></div>
+  </div>
 
-  <div class="field-label" style="margin-top:24px;">バックアップ / 同期（手動）</div>
+  <div class="field-label" style="margin-top:24px;">バックアップ</div>
   <div style="font-size:12px; color:var(--secondary); line-height:1.6; padding: 0 4px 8px;" id="lastExportNote"></div>
-  <button class="secondary-btn" id="exportBtn" style="margin-top:0;">JSON 書き出し</button>
-  <button class="secondary-btn" id="importBtn">JSON 取り込み（スマートマージ）</button>
+  <button class="secondary-btn" id="exportBtn" style="margin-top:0;">データを書き出す（バックアップ）</button>
+  <button class="secondary-btn" id="importBtn">データを取り込む</button>
   <input type="file" id="importFile" accept="application/json" style="display:none;" />
   <div style="text-align:center; padding: 16px 0 4px; font-size: 12px; color: var(--tertiary);" id="versionLabel2"></div>
 </div>
@@ -634,7 +636,7 @@
     return new Promise((res, rej) => { const r = tx(store, 'readwrite').delete(key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
   }
 
-  const APP_VERSION = '1.13.0';
+  const APP_VERSION = '1.14.0';
   function renderVersionLabel() {
     const t = 'v' + APP_VERSION;
     const a = $('#versionLabel'); if (a) a.textContent = t;
@@ -898,7 +900,7 @@
       : 'まだ一度も書き出していません。';
     area.innerHTML = '<div class="backup-card"><div class="bk-t">バックアップをおすすめします</div>'
       + '<div class="bk-d">' + msg + 'データはこの端末内のみに保存されています。長期の記録を守るため、JSONを書き出して保管してください。</div>'
-      + '<button class="bk-btn" id="backupNowBtn">今すぐ JSON を書き出す</button></div>';
+      + '<button class="bk-btn" id="backupNowBtn">データを書き出す（バックアップ）</button></div>';
     $('#backupNowBtn').addEventListener('click', exportData);
   }
 
@@ -1668,10 +1670,9 @@
   function renderBackupSettings() {
     const box = $('#autoBackupBox');
     if (!box) return;
-    if (!fsaSupported()) {
-      box.innerHTML = '<div class="ab-note">自動バックアップはパソコンのChrome / Edge系ブラウザでのみ利用できます（Safari・iPhoneは非対応）。これらの環境では下の「JSON書き出し」を手動でお使いください。</div>';
-      return;
-    }
+    // フォルダへの自動保存は Mac の Chrome／Edge だけ。iPhone・Safari では欄ごと出さない
+    const wrap = $('#autoBackupWrap'); if (wrap) wrap.style.display = fsaSupported() ? '' : 'none';
+    if (!fsaSupported()) { box.innerHTML = ''; return; }
     getBackupDirHandle().then(async (handle) => {
       if (handle && await hasBackupPermission(handle)) {
         box.innerHTML = '<div class="ab-on"><span class="ab-dot"></span>有効（' + escapeHtml(handle.name) + ' フォルダ）</div>'
